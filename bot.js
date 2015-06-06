@@ -7,12 +7,14 @@ var FindAnyFilm = require('findanyfilm');
 var http = require('http');
 var htmlparser = require("htmlparser2");
 var NodeCache = require('node-cache');
+var NodeGeocoder = require('node-geocoder');
 
 var HANDLE = '@suggest_movies';
 
 var client = new Twitter(require('./twitter.private.json'));
 var findanyfilm = new FindAnyFilm(require('./findanyfilm.private.json'));
 var cache = new NodeCache();
+var geocoder = NodeGeocoder('openstreetmap', 'http');
 
 var postingClient = client;
 var statusClient = client;
@@ -21,7 +23,7 @@ var statusClient = client;
 /**
  * Returns a body of recent tweets for a given user id
  */
-    function getStatusText(userId) {
+function getStatusText(userId) {
     var body = "";
     statusClient.get('statuses/user_timeline/' + userId, function (error, tweets, response) {
         if (error) throw error;
@@ -154,25 +156,73 @@ function getFilmImage(film, imageCallback, noImageCallback) {
 }
 
 
+function getImageAndTweet(film, message, inReplyTo) {
+  getFilmImage(film, function(mediaId) {
+    doTweet(message, mediaId, inReplyTo);
+  }, function() {
+    doTweet(message, null, inReplyTo);
+  });
+}
+
+
+function doTweet(message, mediaId, inReplyTo) {
+  console.log('Replying with "' + message + '"');
+  var tweet = {status: message, in_reply_to_status_id: inReplyTo.id_str};
+  if (mediaId) {
+    tweet.media_ids = mediaId;
+  }
+  client.post('statuses/update', tweet,  function(error, tweet, response) {
+    if (error) throw error;
+  });
+}
+
+
 /**
  * Start stream waiting for tweets
  */
 client.stream('statuses/filter', {track: HANDLE}, function(stream) {
     stream.on('data', function(tweet) {
-        console.log(tweet.text);
-        console.log(getStatusText(tweet.user.id_str));
+        console.log(tweet.user.screen_name + ' tweeted "' + tweet.text + '"');
+        //console.log(getStatusText(tweet.user.id_str));
 
-        recommendFilm({genres: "Thriller"}, function(film) {
-          var message = "@" + tweet.user.screen_name + " What about " + film.title + "?";
-          getFilmImage(film, function(mediaId) {
-            client.post('statuses/update', {status: message, in_reply_to_status_id: tweet.id_str, media_ids: mediaId},  function(error, tweet, response) {
-              if (error) throw error;
+        var location = "London";
+        var filter = {genres: "Thriller"};
+
+        recommendFilm(filter, function(film) {
+          var message = "@" + tweet.user.screen_name + " What about " + film.title + "? " + film.url;
+          if (location) {
+            geocoder.geocode(location).then(function(results) {
+              if (results && results.length > 0) {
+                var result = results[0];
+                console.log('Geolocation = ' + result);
+                console.log('User location "' + location + '" => (' + result.latitude + ', ' + result.longitude + ')');
+                findanyfilm.getCinemas({faf_id: film.faf_id, latitude: result.latitude, longitude: result.longitude, maxresults: 1}, function(cinemas) {
+                  if (cinemas.length > 0) {
+                    var cinema = cinemas[0];
+                    if (cinema.cinema_showtimes && cinema.cinema_showtimes.length > 0) {
+                      var showtimes = cinema.cinema_showtimes[0];
+                      var time = new Date(showtimes.time_from);
+                      message = "@" + tweet.user.screen_name + " What about " + film.title + " at " + time.getHours() + ":" + ("0" + time.getMinutes()).substr(-2, 2) + "? ";
+                      if (showtimes.ticket_link) {
+                        message += showtimes.ticket_link;
+                      } else if (cinema.link) {
+                        message += cinema.link;
+                      } else {
+                        message += film.url;
+                      }
+                    }
+                  }
+                  getImageAndTweet(film, message, tweet);
+                });
+              } else {
+                getImageAndTweet(film, message, tweet);
+              }
+            }).catch(function(error) {
+              getImageAndTweet(film, message, tweet);
             });
-          }, function() {
-            client.post('statuses/update', {status: message, in_reply_to_status_id: tweet.id_str},  function(error, tweet, response) {
-              if (error) throw error;
-            });
-          });
+          } else {
+            getImageAndTweet(film, message, tweet);
+          }
         });
     });
     stream.on('error', function(error) {

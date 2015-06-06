@@ -50,6 +50,30 @@ function cleanFeed(text) {
 }
 
 
+function getUsers(tweet) {
+  // Get the users from the tweet text.
+  var users = tweet.text.match(new RegExp('@[^ ]*', 'g'));
+
+  // Strip ourselves out.
+  var ii = users.indexOf(HANDLE);
+  if (ii > -1) {
+    users.splice(ii, 1);
+  }
+
+  // Add in the sender.
+  var allUsers = users.slice();
+  allUsers.push('@' + tweet.user.screen_name);
+
+  return {users: users, allUsers: allUsers};
+}
+
+
+function isCinemaTweet(tweet) {
+  // TODO: Use Watson natural language API?
+  return !!tweet.text.match(new RegExp('cinema|showing|theatre'), 'i');
+}
+
+
 /**
  * Filter a list of films based on a filter object.  All criteria in
  * the filter object must match for the film to pass.
@@ -83,8 +107,8 @@ function filterFilms(films, filter) {
 }
 
 
-function recommendFilm(filter, callback) {
-  findanyfilm.getFilmsOutNow({format: 8}, function(films) {
+function recommendFilm(isCinema, filter, callback) {
+  findanyfilm.getFilmsOutNow({format: isCinema ? 8 : 6}, function(films) {
     var filteredFilms = filterFilms(films, filter);
     var filmToWatch;
     if (filteredFilms.length > 0) {
@@ -95,7 +119,7 @@ function recommendFilm(filter, callback) {
       var ii = Math.floor(Math.random() * films.length);
       filmToWatch = films[ii];
     }
-    console.log("Suggesting " + filmToWatch);
+    console.log("Suggesting " + JSON.stringify(filmToWatch));
     callback(filmToWatch);
   });
 }
@@ -184,22 +208,21 @@ client.stream('statuses/filter', {track: HANDLE}, function(stream) {
     stream.on('data', function(tweet) {
         console.log(tweet.user.screen_name + ' tweeted "' + tweet.text + '"');
         //console.log(getStatusText(tweet.user.id_str));
-        var otherUsers = tweet.text.match(new RegExp('@[^ ]*', 'g'));
-        var ii = otherUsers.indexOf(HANDLE);
-        if (ii > -1) {
-          otherUsers.splice(ii, 1);
-        }
-        otherUsers = otherUsers.join(' ');
+        var users = getUsers(tweet);
+        var otherUsers = users.users.join(' ');
         if (otherUsers) {
           otherUsers += " ";
         }
 
+        var isCinema = isCinemaTweet(tweet);
         var location = "London";
         var filter = {genres: "Thriller"};
 
-        recommendFilm(filter, function(film) {
-          var message = "@" + tweet.user.screen_name + " What about " + film.title + "? " + otherUsers + film.url;
-          if (location) {
+        recommendFilm(isCinema, filter, function(film) {
+          var question = ["What about", "How about", "Have you seen"][Math.floor(Math.random() * 3)];
+          var question2 = ["What about", "How about"][Math.floor(Math.random() * 2)];
+          var message = "@" + tweet.user.screen_name + " " + question + " " + film.title + "? " + otherUsers + film.url;
+          if (isCinema && location) {
             geocoder.geocode(location).then(function(results) {
               if (results && results.length > 0) {
                 var result = results[0];
@@ -211,7 +234,7 @@ client.stream('statuses/filter', {track: HANDLE}, function(stream) {
                     if (cinema.cinema_showtimes && cinema.cinema_showtimes.length > 0) {
                       var showtimes = cinema.cinema_showtimes[0];
                       var time = new Date(showtimes.time_from);
-                      message = "@" + tweet.user.screen_name + " What about " + film.title + " at " + time.getHours() + ":" + ("0" + time.getMinutes()).substr(-2, 2) + "? " + otherUsers;
+                      message = "@" + tweet.user.screen_name + " " + question2 + " " + film.title + " at " + time.getHours() + ":" + ("0" + time.getMinutes()).substr(-2, 2) + "? " + otherUsers;
                       if (showtimes.ticket_link) {
                         message += showtimes.ticket_link;
                       } else if (cinema.link) {
@@ -227,6 +250,53 @@ client.stream('statuses/filter', {track: HANDLE}, function(stream) {
                 getImageAndTweet(film, message, tweet);
               }
             }).catch(function(error) {
+              getImageAndTweet(film, message, tweet);
+            });
+          } else if (!isCinema) {
+            findanyfilm.getAvailability({faf_id: film.faf_id}, function(results) {
+              if (results && results.available_formats) {
+                console.log("Availability: " + JSON.stringify(results.available_formats));
+                var retailer, link, price;
+                if (results.available_formats.Online) {
+                  var onlines = results.available_formats.Online;
+                  if (onlines instanceof Array) {
+                    for (var ii in onlines) {
+                      var online = onlines[ii];
+                      if ((online.retailer || online.merchant) && online.link) {
+                        retailer = online.retailer || online.merchant;
+                        link = online.link;
+                        price = online.price;
+                        break;
+                      }
+                    }
+                  } else if ((onlines.retailer || onlines.merchant) && onlines.link) {
+                    retailer = onlines.retailer || onlines.merchant;
+                    link = onlines.link;
+                    price = onlines.price;
+                  }
+                }
+                if (results.available_formats.Download) {
+                  var downloads = results.available_formats.Download;
+                  if (downloads instanceof Array) {
+                    for (var ii in downloads) {
+                      var download = downloads[ii];
+                      if ((download.retailer || download.merchant) && download.link) {
+                        retailer = download.retailer || download.merchant;
+                        link = download.link;
+                        price = download.price;
+                        break;
+                      }
+                    }
+                  } else if ((downloads.retailer || downloads.merchant) && downloads.link) {
+                    retailer = downloads.retailer || downloads.merchant;
+                    link = downloads.link;
+                    price = downloads.price;
+                  }
+                }
+                if (retailer && link) {
+                  message = "@" + tweet.user.screen_name + " " + question + " " + film.title + " (£" + price + " from " + retailer + ") " + otherUsers + link;
+                }
+              }
               getImageAndTweet(film, message, tweet);
             });
           } else {

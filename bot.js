@@ -6,11 +6,13 @@ var Twitter = require('twitter');
 var FindAnyFilm = require('findanyfilm');
 var http = require('http');
 var htmlparser = require("htmlparser2");
+var NodeCache = require('node-cache');
 
 var HANDLE = '@suggest_movies';
 
 var client = new Twitter(require('./twitter.private.json'));
 var findanyfilm = new FindAnyFilm(require('./findanyfilm.private.json'));
+var cache = new NodeCache();
 
 var postingClient = client;
 var statusClient = client;
@@ -54,7 +56,6 @@ function filterFilms(films, filter) {
   var filteredFilms = [];
   for (ii in films) {
     var film = films[ii];
-    console.log(film);
     var matched = true;
     for (filterKey in filter) {
       var filterValue = filter[filterKey];
@@ -98,43 +99,59 @@ function recommendFilm(filter, callback) {
 }
 
 function getFilmImage(film, imageCallback, noImageCallback) {
-  console.log('Retrieving HTML at ' + film.url);
-  http.get(film.url, function(response) {
-    var imageUrl = "";
-    var parser = new htmlparser.Parser({
-      onopentag: function(name, attribs){
-        if (name === "img" && attribs.alt === "trailer_video") {
-          imageUrl = "http:" + attribs.src;
-        }
-      }
-    }, {decodeEntities: true});
-  
-    response.on('data', function (chunk) {
-      parser.write(chunk);
-    });
-  
-    response.on('end', function () {
-      console.log('Retrieving image at ' + imageUrl);
-      http.get(imageUrl, function(response) {
-        response.setEncoding('binary');
-        var chunks = [];
-        
+  cache.get(film.faf_id, function(error, mediaId) {
+    if (!error && mediaId) {
+      console.log("Got media id " + mediaId + " from cache");
+      imageCallback(mediaId);
+    } else {
+      console.log('Retrieving HTML at ' + film.url);
+      http.get(film.url, function(response) {
+        var imageUrl = "";
+        var parser = new htmlparser.Parser({
+          onopentag: function(name, attribs){
+            if (name === "img" && attribs.alt === "trailer_video") {
+              imageUrl = "http:" + attribs.src;
+            }
+          }
+        }, {decodeEntities: true});
+      
         response.on('data', function (chunk) {
-          chunks.push(new Buffer(chunk, 'binary'));
+          parser.write(chunk);
         });
-  
+      
         response.on('end', function () {
-          var data = Buffer.concat(chunks);
-          imageCallback(data);
+          console.log('Retrieving image at ' + imageUrl);
+          http.get(imageUrl, function(response) {
+            response.setEncoding('binary');
+            var chunks = [];
+            
+            response.on('data', function (chunk) {
+              chunks.push(new Buffer(chunk, 'binary'));
+            });
+      
+            response.on('end', function () {
+              var data = Buffer.concat(chunks);
+              console.log('Posting media');
+              client.post('media/upload', {media_data: data.toString('base64')}, function(error, media, response) {
+                if (error) throw error;
+                var mediaId = media.media_id_string;
+                cache.set(film.faf_id, mediaId, function(error) {
+                  if (error) {
+                    console.log("Failed to set " + film.faf_id + " = " + mediaId + ": " + error);
+                  }
+                });
+                imageCallback(mediaId);
+              });
+            });
+    
+          }).on('error', function(error) {
+            noImageCallback();
+          });
         });
-
-      }).on('error', function(error) {
-        noImageCallback();
       });
-    });
+    }
   });
 }
-
 
 
 /**
@@ -145,32 +162,18 @@ client.stream('statuses/filter', {track: HANDLE}, function(stream) {
         console.log(tweet.text);
         console.log(getStatusText(tweet.user.id_str));
 
-        recommendFilm({genre: "Adventure"}, function(film) {
+        recommendFilm({genres: "Thriller"}, function(film) {
           var message = "@" + tweet.user.screen_name + " What about " + film.title + "?";
-          getFilmImage(film, function(image) {
-            console.log('Posting media');
-            client.post('media/upload', {media_data: image.toString('base64')}, function(error, media, response) {
+          getFilmImage(film, function(mediaId) {
+            client.post('statuses/update', {status: message, in_reply_to_status_id: tweet.id_str, media_ids: mediaId},  function(error, tweet, response) {
               if (error) throw error;
-              console.log('Posting ' + message);
-              client.post('statuses/update', {status: message, in_reply_to_status_id: tweet.id_str, media_ids: media.media_id_string},  function(error, tweet, response) {
-                if(error) throw error;
-                console.log(tweet);  // Tweet body. 
-                console.log(response);  // Raw response object. 
-              });
             });
           }, function() {
             client.post('statuses/update', {status: message, in_reply_to_status_id: tweet.id_str},  function(error, tweet, response) {
-              if(error) throw error;
-              console.log(tweet);  // Tweet body. 
-              console.log(response);  // Raw response object. 
+              if (error) throw error;
             });
           });
         });
-
-        //var message = "@"+tweet.user.screen_name+" some reply tweet "+new Date().getTime();
-        //postingClient.post('statuses/update', {status: message},  function(error, tweet, response){
-        //    if(error) throw error;
-        //});
     });
     stream.on('error', function(error) {
         throw error;

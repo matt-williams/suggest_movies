@@ -184,12 +184,21 @@ client.stream('statuses/filter', {track: HANDLE}, function(stream) {
     stream.on('data', function(tweet) {
         console.log(tweet.user.screen_name + ' tweeted "' + tweet.text + '"');
         //console.log(getStatusText(tweet.user.id_str));
+        var otherUsers = tweet.text.match(new RegExp('@[^ ]*', 'g'));
+        var ii = otherUsers.indexOf(HANDLE);
+        if (ii > -1) {
+          otherUsers.splice(ii, 1);
+        }
+        otherUsers = otherUsers.join(' ');
+        if (otherUsers) {
+          otherUsers += " ";
+        }
 
         var location = "London";
         var filter = {genres: "Thriller"};
 
         recommendFilm(filter, function(film) {
-          var message = "@" + tweet.user.screen_name + " What about " + film.title + "? " + film.url;
+          var message = "@" + tweet.user.screen_name + " What about " + film.title + "? " + otherUsers + film.url;
           if (location) {
             geocoder.geocode(location).then(function(results) {
               if (results && results.length > 0) {
@@ -202,7 +211,7 @@ client.stream('statuses/filter', {track: HANDLE}, function(stream) {
                     if (cinema.cinema_showtimes && cinema.cinema_showtimes.length > 0) {
                       var showtimes = cinema.cinema_showtimes[0];
                       var time = new Date(showtimes.time_from);
-                      message = "@" + tweet.user.screen_name + " What about " + film.title + " at " + time.getHours() + ":" + ("0" + time.getMinutes()).substr(-2, 2) + "? ";
+                      message = "@" + tweet.user.screen_name + " What about " + film.title + " at " + time.getHours() + ":" + ("0" + time.getMinutes()).substr(-2, 2) + "? " + otherUsers;
                       if (showtimes.ticket_link) {
                         message += showtimes.ticket_link;
                       } else if (cinema.link) {

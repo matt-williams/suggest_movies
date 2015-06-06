@@ -1,0 +1,20 @@
+{
+  "name": "suggest_movies",
+  "version": "0.1.0",
+  "description": "@suggest_movies twitter bot for Comcast NBCUniversal Hackathon London 2015",
+  "scripts": {
+    "start": "node suggest_movies.js"
+  },
+  "dependencies": {
+    "twitter": "1.2.5",
+    "findanyfilm": "git://github.com/matt-williams/node-findanyfilm.git",
+    "htmlparser2": "3.8.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/matt-williams/suggest_movies.git"
+  },
+  "bugs": {
+    "url": "https://github.com/matt-williams/suggest_movies/issues"
+  }
+}

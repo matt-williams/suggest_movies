@@ -6,12 +6,7 @@ var Twitter = require('twitter');
 
 var HANDLE = '@suggest_movies';
 
-var client = new Twitter({
-    consumer_key: 'QDTtoHMgVbTkLyYQMEFMSDX7w',
-    consumer_secret: '1ernNHtwXqtBayELPXV19TB65l6Qp4zm4p1eQDWTzrLBWfvfeP',
-    access_token_key: '3310399113-LKcE2BjgQlRdInzIwsTmzKXXgqJxJGmShSJNTlu',
-    access_token_secret: 'dnvOoZsSugW9ZrZeELVFyjhsT53zpxs9ws69cSlSCR8xN'
-});
+var client = new Twitter(require('./twitter.private.json'));
 
 var postingClient = client;
 var statusClient = client;

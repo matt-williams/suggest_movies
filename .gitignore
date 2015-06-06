@@ -27,5 +27,5 @@ build/Release
 node_modules
 
 # Private configuration
-./manifest.yaml
-./*.private.json
+manifest.yml
+*.private.json

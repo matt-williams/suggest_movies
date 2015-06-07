@@ -1,5 +1,6 @@
 /**
  * Created by Alicia on 06/06/2015.
+ * Extended by Matt on 06/06/2015.
  */
 
 var Twitter = require('twitter');
@@ -8,6 +9,7 @@ var http = require('http');
 var htmlparser = require("htmlparser2");
 var NodeCache = require('node-cache');
 var NodeGeocoder = require('node-geocoder');
+var async = require('async');
 
 var HANDLE = '@suggest_movies';
 
@@ -23,18 +25,29 @@ var statusClient = client;
 /**
  * Returns a body of recent tweets for a given user id
  */
-function getStatusText(userId) {
-    var body = "";
-    statusClient.get('statuses/user_timeline/' + userId, function (error, tweets, response) {
+function getStatusText(userId, callback) {
+  cache.get(userId, function(error, body) {
+    if (!error && body) {
+      console.log("Got body for " + userId + " from cache");
+      callback(body);
+    } else {
+      body = "";
+      statusClient.get('statuses/user_timeline/' + userId, function (error, tweets, response) {
         if (error) throw error;
         for (var i = 0; i < tweets.length; i++) {
-            var tweetObj = tweets[i];
-            body += tweetObj.text + " ";
+          var tweetObj = tweets[i];
+          body += tweetObj.text + " ";
         }
         body = cleanFeed(body);
-        console.log(body);
-    });
-    return body;
+        callback(body);
+        cache.set(userId, body, 3600, function(error) {
+          if (error) {
+            console.log("Failed to cache body for " + userId + ": " + error);
+          }
+        });
+      });
+    }
+  });
 }
 
 /**
@@ -47,6 +60,23 @@ function cleanFeed(text) {
     return text.replace(urlRegex, function(url) {
         return '';
     })
+}
+
+
+function getGenres(userId, callback) {
+  console.log("Getting genres for user " + userId);
+  callback(null, ["Adventure", "Action", "Classic", "Romance", "Bollywood", "Suspense", "Musical", "Drama", "Horror", "Foreign", "War"]);
+  //http.get("http://localhost:3000/like/" + userId, function(response) {
+  //  var str = '';
+
+  //  response.on('data', function (chunk) {
+  //    str += chunk;
+  //  });
+
+  //  response.on('end', function () {
+  //    callback(JSON.parse(str));
+  //  });
+  //});
 }
 
 
@@ -65,6 +95,30 @@ function getUsers(tweet) {
   allUsers.push('@' + tweet.user.screen_name);
 
   return {users: users, allUsers: allUsers};
+}
+
+
+function mergeGenres(genresByUser) {
+  console.log("Merging " + JSON.stringify(genresByUser) + "...");
+  var aggGenreScoresObj = {};
+  for (var ii in genresByUser) {
+    var genres = genresByUser[ii];
+    for (var jj in genres) {
+      var genre = genres[jj];
+      aggGenreScoresObj[genre] = (aggGenreScoresObj[genre] || 0) + genres.length - jj;
+    }
+  }
+  var aggGenreScoresArr = [];
+  for (var genre in aggGenreScoresObj) {
+    aggGenreScoresArr.push({genre: genre, score: aggGenreScoresObj[genre]});
+  }
+  aggGenreScoresArr.sort(function (a, b) { return b.score - a.score; });
+  var genres = [];
+  for (var ii in aggGenreScoresArr) {
+    genres.push(aggGenreScoresArr[ii].genre);
+  }
+  console.log("... to " + JSON.stringify(genres));
+  return genres;
 }
 
 
@@ -107,9 +161,18 @@ function filterFilms(films, filter) {
 }
 
 
-function recommendFilm(isCinema, filter, callback) {
+function recommendFilm(isCinema, genres, callback) {
   findanyfilm.getFilmsOutNow({format: isCinema ? 8 : 6}, function(films) {
-    var filteredFilms = filterFilms(films, filter);
+    console.log(films.length + " films out now - filtering against " + genres);
+    var filteredFilms;
+    for (ii in genres) {
+      var genre = genres[ii];
+      filteredFilms = filterFilms(films, {genres: genre});
+      console.log("Filtering by genre " + genre + " gives " + filteredFilms.length + " films");
+      if (filteredFilms.length > 0) {
+        break;
+      }
+    }
     var filmToWatch;
     if (filteredFilms.length > 0) {
       var ii = Math.floor(Math.random() * filteredFilms.length);
@@ -161,7 +224,7 @@ function getFilmImage(film, imageCallback, noImageCallback) {
               client.post('media/upload', {media_data: data.toString('base64')}, function(error, media, response) {
                 if (error) throw error;
                 var mediaId = media.media_id_string;
-                cache.set(film.faf_id, mediaId, function(error) {
+                cache.set(film.faf_id, mediaId, 86400, function(error) {
                   if (error) {
                     console.log("Failed to set " + film.faf_id + " = " + mediaId + ": " + error);
                   }
@@ -207,101 +270,105 @@ function doTweet(message, mediaId, inReplyTo) {
 client.stream('statuses/filter', {track: HANDLE}, function(stream) {
     stream.on('data', function(tweet) {
         console.log(tweet.user.screen_name + ' tweeted "' + tweet.text + '"');
-        //console.log(getStatusText(tweet.user.id_str));
+
         var users = getUsers(tweet);
         var otherUsers = users.users.join(' ');
         if (otherUsers) {
           otherUsers += " ";
         }
 
-        var isCinema = isCinemaTweet(tweet);
-        var location = "London";
-        var filter = {genres: "Thriller"};
+        async.map(users.allUsers, getGenres, function(error, genresByUser) {
+          if (error) throw error;
+          var genres = mergeGenres(genresByUser);
 
-        recommendFilm(isCinema, filter, function(film) {
-          var question = ["What about", "How about", "Have you seen"][Math.floor(Math.random() * 3)];
-          var question2 = ["What about", "How about"][Math.floor(Math.random() * 2)];
-          var message = "@" + tweet.user.screen_name + " " + question + " " + film.title + "? " + otherUsers + film.url;
-          if (isCinema && location) {
-            geocoder.geocode(location).then(function(results) {
-              if (results && results.length > 0) {
-                var result = results[0];
-                console.log('Geolocation = ' + result);
-                console.log('User location "' + location + '" => (' + result.latitude + ', ' + result.longitude + ')');
-                findanyfilm.getCinemas({faf_id: film.faf_id, latitude: result.latitude, longitude: result.longitude, maxresults: 1}, function(cinemas) {
-                  if (cinemas.length > 0) {
-                    var cinema = cinemas[0];
-                    if (cinema.cinema_showtimes && cinema.cinema_showtimes.length > 0) {
-                      var showtimes = cinema.cinema_showtimes[0];
-                      var time = new Date(showtimes.time_from);
-                      message = "@" + tweet.user.screen_name + " " + question2 + " " + film.title + " at " + time.getHours() + ":" + ("0" + time.getMinutes()).substr(-2, 2) + "? " + otherUsers;
-                      if (showtimes.ticket_link) {
-                        message += showtimes.ticket_link;
-                      } else if (cinema.link) {
-                        message += cinema.link;
-                      } else {
-                        message += film.url;
+          var isCinema = isCinemaTweet(tweet);
+          var location = tweet.user.location;
+  
+          recommendFilm(isCinema, genres, function(film) {
+            var question = ["What about", "How about", "Have you seen"][Math.floor(Math.random() * 3)];
+            var question2 = ["What about", "How about"][Math.floor(Math.random() * 2)];
+            var message = "@" + tweet.user.screen_name + " " + question + " " + film.title + "? " + otherUsers + film.url;
+            if (isCinema && location) {
+              geocoder.geocode(location).then(function(results) {
+                if (results && results.length > 0) {
+                  var result = results[0];
+                  console.log('Geolocation = ' + result);
+                  console.log('User location "' + location + '" => (' + result.latitude + ', ' + result.longitude + ')');
+                  findanyfilm.getCinemas({faf_id: film.faf_id, latitude: result.latitude, longitude: result.longitude, maxresults: 1}, function(cinemas) {
+                    if (cinemas.length > 0) {
+                      var cinema = cinemas[0];
+                      if (cinema.cinema_showtimes && cinema.cinema_showtimes.length > 0) {
+                        var showtimes = cinema.cinema_showtimes[0];
+                        var time = new Date(showtimes.time_from);
+                        message = "@" + tweet.user.screen_name + " " + question2 + " " + film.title + " at " + time.getHours() + ":" + ("0" + time.getMinutes()).substr(-2, 2) + "? " + otherUsers;
+                        if (showtimes.ticket_link) {
+                          message += showtimes.ticket_link;
+                        } else if (cinema.link) {
+                          message += cinema.link;
+                        } else {
+                          message += film.url;
+                        }
                       }
                     }
-                  }
+                    getImageAndTweet(film, message, tweet);
+                  });
+                } else {
                   getImageAndTweet(film, message, tweet);
-                });
-              } else {
+                }
+              }).catch(function(error) {
                 getImageAndTweet(film, message, tweet);
-              }
-            }).catch(function(error) {
-              getImageAndTweet(film, message, tweet);
-            });
-          } else if (!isCinema) {
-            findanyfilm.getAvailability({faf_id: film.faf_id}, function(results) {
-              if (results && results.available_formats) {
-                console.log("Availability: " + JSON.stringify(results.available_formats));
-                var retailer, link, price;
-                if (results.available_formats.Online) {
-                  var onlines = results.available_formats.Online;
-                  if (onlines instanceof Array) {
-                    for (var ii in onlines) {
-                      var online = onlines[ii];
-                      if ((online.retailer || online.merchant) && online.link) {
-                        retailer = online.retailer || online.merchant;
-                        link = online.link;
-                        price = online.price;
-                        break;
+              });
+            } else if (!isCinema) {
+              findanyfilm.getAvailability({faf_id: film.faf_id}, function(results) {
+                if (results && results.available_formats) {
+                  console.log("Availability: " + JSON.stringify(results.available_formats));
+                  var retailer, link, price;
+                  if (results.available_formats.Online) {
+                    var onlines = results.available_formats.Online;
+                    if (onlines instanceof Array) {
+                      for (var ii in onlines) {
+                        var online = onlines[ii];
+                        if ((online.retailer || online.merchant) && online.link) {
+                          retailer = online.retailer || online.merchant;
+                          link = online.link;
+                          price = online.price;
+                          break;
+                        }
                       }
+                    } else if ((onlines.retailer || onlines.merchant) && onlines.link) {
+                      retailer = onlines.retailer || onlines.merchant;
+                      link = onlines.link;
+                      price = onlines.price;
                     }
-                  } else if ((onlines.retailer || onlines.merchant) && onlines.link) {
-                    retailer = onlines.retailer || onlines.merchant;
-                    link = onlines.link;
-                    price = onlines.price;
+                  }
+                  if (results.available_formats.Download) {
+                    var downloads = results.available_formats.Download;
+                    if (downloads instanceof Array) {
+                      for (var ii in downloads) {
+                        var download = downloads[ii];
+                        if ((download.retailer || download.merchant) && download.link) {
+                          retailer = download.retailer || download.merchant;
+                          link = download.link;
+                          price = download.price;
+                          break;
+                        }
+                      }
+                    } else if ((downloads.retailer || downloads.merchant) && downloads.link) {
+                      retailer = downloads.retailer || downloads.merchant;
+                      link = downloads.link;
+                      price = downloads.price;
+                    }
+                  }
+                  if (retailer && link) {
+                    message = "@" + tweet.user.screen_name + " " + question + " " + film.title + " (£" + price + " from " + retailer + ") " + otherUsers + link;
                   }
                 }
-                if (results.available_formats.Download) {
-                  var downloads = results.available_formats.Download;
-                  if (downloads instanceof Array) {
-                    for (var ii in downloads) {
-                      var download = downloads[ii];
-                      if ((download.retailer || download.merchant) && download.link) {
-                        retailer = download.retailer || download.merchant;
-                        link = download.link;
-                        price = download.price;
-                        break;
-                      }
-                    }
-                  } else if ((downloads.retailer || downloads.merchant) && downloads.link) {
-                    retailer = downloads.retailer || downloads.merchant;
-                    link = downloads.link;
-                    price = downloads.price;
-                  }
-                }
-                if (retailer && link) {
-                  message = "@" + tweet.user.screen_name + " " + question + " " + film.title + " (£" + price + " from " + retailer + ") " + otherUsers + link;
-                }
-              }
+                getImageAndTweet(film, message, tweet);
+              });
+            } else {
               getImageAndTweet(film, message, tweet);
-            });
-          } else {
-            getImageAndTweet(film, message, tweet);
-          }
+            }
+          });
         });
     });
     stream.on('error', function(error) {

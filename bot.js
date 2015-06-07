@@ -82,7 +82,6 @@ function getGenres(userId, callback) {
 
 
 function getUsers(tweet) {
-  console.log("In getUsers...");
   // Get the users from the tweet text.
   var users = tweet.text.match(new RegExp('@[_0-9A-Za-z]*', 'g')) || [];
 
@@ -97,11 +96,9 @@ function getUsers(tweet) {
 
   // Add in the sender.
   var sender = '@' + tweet.user.screen_name;
-  console.log("Got users " + users + " and sender " + sender);
   if (users.indexOf(sender) < 0) {
     users.splice(0, 0, sender);
   }
-  console.log("Got users " + users);
 
   return users;
 }
@@ -278,7 +275,9 @@ function doTweet(message, mediaId, inReplyTo) {
     tweet.media_ids = mediaId;
   }
   client.post('statuses/update', tweet,  function(error, tweet, response) {
-    if (error) throw error;
+    if (error) {
+      console.log("Error while posting: " + error);
+    }
   });
 }
 

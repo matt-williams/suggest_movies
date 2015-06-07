@@ -82,20 +82,33 @@ function getGenres(userId, callback) {
 
 
 function getUsers(tweet) {
+  console.log("In getUsers...");
   // Get the users from the tweet text.
-  var users = tweet.text.match(new RegExp('@[_0-9A-Za-z]*', 'g'));
+  var users = tweet.text.match(new RegExp('@[_0-9A-Za-z]*', 'g')) || [];
 
   // Strip ourselves out.
-  var ii = users.indexOf(HANDLE);
-  if (ii > -1) {
+  while (true) {
+    var ii = users.indexOf(HANDLE);
+    if (ii < 0) {
+      break;
+    }
     users.splice(ii, 1);
   }
 
   // Add in the sender.
-  var allUsers = users.slice();
-  allUsers.push('@' + tweet.user.screen_name);
+  var sender = '@' + tweet.user.screen_name;
+  console.log("Got users " + users + " and sender " + sender);
+  if (users.indexOf(sender) < 0) {
+    users.splice(0, 0, sender);
+  }
+  console.log("Got users " + users);
 
-  return {users: users, allUsers: allUsers};
+  return users;
+}
+
+
+function getTopics(tweet) {
+  return tweet.text.match(new RegExp('#[_0-9A-Za-z]*', 'g')) || [];
 }
 
 
@@ -130,7 +143,7 @@ function mergeGenres(genresByUser) {
 
 function isCinemaTweet(tweet) {
   // TODO: Use Watson natural language API?
-  return !!tweet.text.match(new RegExp('cinema|showing|theatre'), 'i');
+  return !!tweet.text.match(new RegExp('cinema|showing|screening|theatre'), 'i');
 }
 
 
@@ -278,12 +291,16 @@ client.stream('statuses/filter', {track: HANDLE}, function(stream) {
         console.log(tweet.user.screen_name + ' tweeted "' + tweet.text + '"');
 
         var users = getUsers(tweet);
-        var otherUsers = users.users.join(' ');
-        if (otherUsers) {
-          otherUsers += " ";
+        var usersStr = users.join(' ');
+        if (usersStr) {
+          usersStr += " ";
+        }
+        var topicsStr = getTopics(tweet).join(' ');
+        if (topicsStr) {
+          topicsStr += " ";
         }
 
-        async.map(users.allUsers, getGenres, function(error, genresByUser) {
+        async.map(users, getGenres, function(error, genresByUser) {
           if (error) throw error;
           var genres = mergeGenres(genresByUser);
 
@@ -293,7 +310,7 @@ client.stream('statuses/filter', {track: HANDLE}, function(stream) {
           recommendFilm(isCinema, genres, function(film) {
             var question = ["What about", "How about", "Have you seen"][Math.floor(Math.random() * 3)];
             var question2 = ["What about", "How about"][Math.floor(Math.random() * 2)];
-            var message = "@" + tweet.user.screen_name + " " + question + " " + film.title + "? " + otherUsers + film.url;
+            var message = question + " " + film.title + "? " + usersStr + topicsStr + film.url;
             if (isCinema && location) {
               geocoder.geocode(location).then(function(results) {
                 if (results && results.length > 0) {
@@ -305,7 +322,7 @@ client.stream('statuses/filter', {track: HANDLE}, function(stream) {
                       if (cinema.cinema_showtimes && cinema.cinema_showtimes.length > 0) {
                         var showtimes = cinema.cinema_showtimes[0];
                         var time = new Date(showtimes.time_from);
-                        message = "@" + tweet.user.screen_name + " " + question2 + " " + film.title + " at " + time.getHours() + ":" + ("0" + time.getMinutes()).substr(-2, 2) + "? " + otherUsers;
+                        message = question2 + " " + film.title + " at " + time.getHours() + ":" + ("0" + time.getMinutes()).substr(-2, 2) + "? " + usersStr + topicsStr;
                         if (showtimes.ticket_link) {
                           message += showtimes.ticket_link;
                         } else if (cinema.link) {
@@ -365,7 +382,7 @@ client.stream('statuses/filter', {track: HANDLE}, function(stream) {
                     }
                   }
                   if (retailer && link) {
-                    message = "@" + tweet.user.screen_name + " " + question + " " + film.title + " (£" + price + " from " + retailer + ") " + otherUsers + link;
+                    message = question + " " + film.title + " (£" + price + " from " + retailer + ") " + usersStr + topicsStr + link;
                   }
                 }
                 getImageAndTweet(film, message, tweet);

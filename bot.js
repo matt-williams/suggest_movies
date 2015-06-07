@@ -64,19 +64,20 @@ function cleanFeed(text) {
 
 
 function getGenres(userId, callback) {
-  console.log("Getting genres for user " + userId);
-  callback(null, ["Adventure", "Action", "Classic", "Romance", "Bollywood", "Suspense", "Musical", "Drama", "Horror", "Foreign", "War"]);
-  //http.get("http://localhost:3000/like/" + userId, function(response) {
-  //  var str = '';
+  var url = "http://localhost:3000/like/" + userId;
+  console.log("Getting genres for user " + userId + " from "+ url);
+  //callback(null, ["Adventure", "Action", "Classic", "Romance", "Bollywood", "Suspense", "Musical", "Drama", "Horror", "Foreign", "War"]);
+  http.get(url, function(response) {
+    var str = '';
 
-  //  response.on('data', function (chunk) {
-  //    str += chunk;
-  //  });
+    response.on('data', function (chunk) {
+      str += chunk;
+    });
 
-  //  response.on('end', function () {
-  //    callback(JSON.parse(str));
-  //  });
-  //});
+    response.on('end', function () {
+      callback(null, JSON.parse(str));
+    });
+  });
 }
 
 
@@ -100,12 +101,17 @@ function getUsers(tweet) {
 
 function mergeGenres(genresByUser) {
   console.log("Merging " + JSON.stringify(genresByUser) + "...");
+  var maxNumGenres = 0;
+  for (var ii in genresByUser) {
+    var genres = genresByUser[ii];
+    maxNumGenres = Math.max(maxNumGenres, genres.length);
+  }
   var aggGenreScoresObj = {};
   for (var ii in genresByUser) {
     var genres = genresByUser[ii];
     for (var jj in genres) {
       var genre = genres[jj];
-      aggGenreScoresObj[genre] = (aggGenreScoresObj[genre] || 0) + genres.length - jj;
+      aggGenreScoresObj[genre] = (aggGenreScoresObj[genre] || 0) + maxNumGenres - jj;
     }
   }
   var aggGenreScoresArr = [];
@@ -292,7 +298,6 @@ client.stream('statuses/filter', {track: HANDLE}, function(stream) {
               geocoder.geocode(location).then(function(results) {
                 if (results && results.length > 0) {
                   var result = results[0];
-                  console.log('Geolocation = ' + result);
                   console.log('User location "' + location + '" => (' + result.latitude + ', ' + result.longitude + ')');
                   findanyfilm.getCinemas({faf_id: film.faf_id, latitude: result.latitude, longitude: result.longitude, maxresults: 1}, function(cinemas) {
                     if (cinemas.length > 0) {

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "@suggest_movies twitter bot for Comcast NBCUniversal Hackathon London 2015",
   "scripts": {
-    "start": "node suggest_movies.js"
+    "start": "node bot.js"
   },
   "dependencies": {
     "twitter": "1.2.5",

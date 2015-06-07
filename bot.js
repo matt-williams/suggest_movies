@@ -83,7 +83,7 @@ function getGenres(userId, callback) {
 
 function getUsers(tweet) {
   // Get the users from the tweet text.
-  var users = tweet.text.match(new RegExp('@[^ ]*', 'g'));
+  var users = tweet.text.match(new RegExp('@[_0-9A-Za-z]*', 'g'));
 
   // Strip ourselves out.
   var ii = users.indexOf(HANDLE);

@@ -276,7 +276,7 @@ function doTweet(message, mediaId, inReplyTo) {
   }
   client.post('statuses/update', tweet,  function(error, tweet, response) {
     if (error) {
-      console.log("Error while posting: " + error);
+      console.log("Error while posting: ", error);
     }
   });
 }
